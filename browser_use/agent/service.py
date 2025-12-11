@@ -991,15 +991,18 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 		"""Prepare the context for the step: browser state, action models, page actions"""
 		# step_start_time is now set in step() method
 
-		assert self.browser_session is not None, 'BrowserSession is not set up'
+                assert self.browser_session is not None, 'BrowserSession is not set up'
 
-		self.logger.debug(f'🌐 Step {self.state.n_steps}: Getting browser state...')
-		# Always take screenshots for all steps
-		self.logger.debug('📸 Requesting browser state with include_screenshot=True')
-		browser_state_summary = await self.browser_session.get_browser_state_summary(
-			include_screenshot=True,  # always capture even if use_vision=False so that cloud sync is useful (it's fast now anyway)
-			include_recent_events=self.include_recent_events,
-		)
+                self.logger.debug(f'🌐 Step {self.state.n_steps}: Getting browser state...')
+                # Always take screenshots for all steps
+                include_screenshot = True
+                if not self.browser_session.screenshots_enabled:
+                        self.logger.debug('📸 Automatic screenshots disabled - skipping unless manually requested')
+                self.logger.debug(f'📸 Requesting browser state with include_screenshot={include_screenshot}')
+                browser_state_summary = await self.browser_session.get_browser_state_summary(
+                        include_screenshot=include_screenshot,
+                        include_recent_events=self.include_recent_events,
+                )
 		if browser_state_summary.screenshot:
 			self.logger.debug(f'📸 Got browser state WITH screenshot, length: {len(browser_state_summary.screenshot)}')
 		else:

@@ -26,12 +26,13 @@ from browser_use.browser.events import (
 	AgentFocusChangedEvent,
 	BrowserConnectedEvent,
 	BrowserErrorEvent,
-	BrowserLaunchEvent,
-	BrowserLaunchResult,
-	BrowserStartEvent,
-	BrowserStateRequestEvent,
-	BrowserStopEvent,
-	BrowserStoppedEvent,
+        BrowserLaunchEvent,
+        BrowserLaunchResult,
+        BrowserStartEvent,
+        BrowserStateRequestEvent,
+        ScreenshotEvent,
+        BrowserStopEvent,
+        BrowserStoppedEvent,
 	CloseTabEvent,
 	FileDownloadedEvent,
 	NavigateToUrlEvent,
@@ -367,14 +368,21 @@ class BrowserSession(BaseModel):
 		description='BrowserProfile() options to use for the session, otherwise a default profile will be used',
 	)
 
-	# LLM screenshot resizing configuration
-	llm_screenshot_size: tuple[int, int] | None = Field(
-		default=None,
-		description='Target size (width, height) to resize screenshots before sending to LLM. Coordinates from LLM will be scaled back to original viewport size.',
-	)
+        # LLM screenshot resizing configuration
+        llm_screenshot_size: tuple[int, int] | None = Field(
+                default=None,
+                description='Target size (width, height) to resize screenshots before sending to LLM. Coordinates from LLM will be scaled back to original viewport size.',
+        )
 
-	# Cache of original viewport size for coordinate conversion (set when browser state is captured)
-	_original_viewport_size: tuple[int, int] | None = PrivateAttr(default=None)
+        # Toggle automatic screenshot capture for state collection
+        screenshots_enabled: bool = Field(
+                default=True,
+                description='Whether automatic screenshots are captured when building browser state.',
+        )
+
+        # Cache of original viewport size for coordinate conversion (set when browser state is captured)
+        _original_viewport_size: tuple[int, int] | None = PrivateAttr(default=None)
+        _force_next_screenshot: bool = PrivateAttr(default=False)
 
 	# Convenience properties for common browser settings
 	@property
@@ -1294,42 +1302,69 @@ class BrowserSession(BaseModel):
 
 		return session
 
-	# endregion - ========== CDP-based ... ==========
+        # endregion - ========== CDP-based ... ==========
 
-	# region - ========== Helper Methods ==========
-	@observe_debug(ignore_input=True, ignore_output=True, name='get_browser_state_summary')
-	async def get_browser_state_summary(
-		self,
-		include_screenshot: bool = True,
-		cached: bool = False,
-		include_recent_events: bool = False,
-	) -> BrowserStateSummary:
-		if cached and self._cached_browser_state_summary is not None and self._cached_browser_state_summary.dom_state:
-			# Don't use cached state if it has 0 interactive elements
-			selector_map = self._cached_browser_state_summary.dom_state.selector_map
+        # region - ========== Helper Methods ==========
+        def request_next_screenshot(self) -> None:
+                """Request that the next browser state capture includes a screenshot."""
 
-			# Don't use cached state if we need a screenshot but the cached state doesn't have one
-			if include_screenshot and not self._cached_browser_state_summary.screenshot:
-				self.logger.debug('⚠️ Cached browser state has no screenshot, fetching fresh state with screenshot')
-				# Fall through to fetch fresh state with screenshot
-			elif selector_map and len(selector_map) > 0:
-				self.logger.debug('🔄 Using pre-cached browser state summary for open tab')
-				return self._cached_browser_state_summary
+                self._force_next_screenshot = True
+
+        def consume_forced_screenshot_request(self) -> bool:
+                """Consume and clear any pending one-off screenshot request."""
+
+                requested = self._force_next_screenshot
+                self._force_next_screenshot = False
+                return requested
+
+        async def capture_viewport_screenshot(self) -> str:
+                """Capture a single screenshot of the current viewport."""
+
+                await self.get_or_create_cdp_session(target_id=None, focus=True)
+                screenshot_event = self.event_bus.dispatch(ScreenshotEvent(full_page=False))
+                await screenshot_event
+                screenshot_b64 = await screenshot_event.event_result(raise_if_any=True, raise_if_none=True)
+                return str(screenshot_b64)
+
+        @observe_debug(ignore_input=True, ignore_output=True, name='get_browser_state_summary')
+        async def get_browser_state_summary(
+                self,
+                include_screenshot: bool = True,
+                cached: bool = False,
+                include_recent_events: bool = False,
+        ) -> BrowserStateSummary:
+                force_screenshot = self.consume_forced_screenshot_request()
+                effective_include_screenshot = include_screenshot and (self.screenshots_enabled or force_screenshot)
+
+                if include_screenshot and not effective_include_screenshot:
+                        self.logger.debug('📸 Screenshots disabled for this browser state request')
+
+                if cached and self._cached_browser_state_summary is not None and self._cached_browser_state_summary.dom_state:
+                        # Don't use cached state if it has 0 interactive elements
+                        selector_map = self._cached_browser_state_summary.dom_state.selector_map
+
+                        # Don't use cached state if we need a screenshot but the cached state doesn't have one
+                        if effective_include_screenshot and not self._cached_browser_state_summary.screenshot:
+                                self.logger.debug('⚠️ Cached browser state has no screenshot, fetching fresh state with screenshot')
+                                # Fall through to fetch fresh state with screenshot
+                        elif selector_map and len(selector_map) > 0:
+                                self.logger.debug('🔄 Using pre-cached browser state summary for open tab')
+                                return self._cached_browser_state_summary
 			else:
 				self.logger.debug('⚠️ Cached browser state has 0 interactive elements, fetching fresh state')
 				# Fall through to fetch fresh state
 
 		# Dispatch the event and wait for result
-		event: BrowserStateRequestEvent = cast(
-			BrowserStateRequestEvent,
-			self.event_bus.dispatch(
-				BrowserStateRequestEvent(
-					include_dom=True,
-					include_screenshot=include_screenshot,
-					include_recent_events=include_recent_events,
-				)
-			),
-		)
+                event: BrowserStateRequestEvent = cast(
+                        BrowserStateRequestEvent,
+                        self.event_bus.dispatch(
+                                BrowserStateRequestEvent(
+                                        include_dom=True,
+                                        include_screenshot=effective_include_screenshot,
+                                        include_recent_events=include_recent_events,
+                                )
+                        ),
+                )
 
 		# The handler returns the BrowserStateSummary directly
 		result = await event.event_result(raise_if_none=True, raise_if_any=True)

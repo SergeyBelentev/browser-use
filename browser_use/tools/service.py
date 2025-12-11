@@ -1168,11 +1168,11 @@ You will be given a query and the markdown of a webpage that has been filtered t
 				error_msg = 'Failed to execute scroll action.'
 				return ActionResult(error=error_msg)
 
-		@self.registry.action(
-			'',
-			param_model=SendKeysAction,
-		)
-		async def send_keys(params: SendKeysAction, browser_session: BrowserSession):
+                @self.registry.action(
+                        '',
+                        param_model=SendKeysAction,
+                )
+                async def send_keys(params: SendKeysAction, browser_session: BrowserSession):
 			# Dispatch send keys event
 			try:
 				event = browser_session.event_bus.dispatch(SendKeysEvent(keys=params.keys))
@@ -1208,23 +1208,74 @@ You will be given a query and the markdown of a webpage that has been filtered t
 					long_term_memory=f"Tried scrolling to text '{text}' but it was not found",
 				)
 
-		@self.registry.action(
-			'Get a screenshot of the current viewport. Use when: visual inspection needed, layout unclear, element positions uncertain, debugging UI issues, or verifying page state. Screenshot is included in the next browser_state No parameters are needed.',
-			param_model=NoParamsAction,
-		)
-		async def screenshot(_: NoParamsAction):
-			"""Request that a screenshot be included in the next observation"""
-			memory = 'Requested screenshot for next observation'
-			msg = f'📸 {memory}'
-			logger.info(msg)
+                @self.registry.action(
+                        'Get a screenshot of the current viewport. Use when: visual inspection needed, layout unclear, element positions uncertain, debugging UI issues, or verifying page state. Screenshot is included in the next browser_state No parameters are needed.',
+                        param_model=NoParamsAction,
+                )
+                async def screenshot(_: NoParamsAction, browser_session: BrowserSession):
+                        """Request that a screenshot be included in the next observation"""
+                        memory = 'Requested screenshot for next observation'
+                        msg = f'📸 {memory}'
+                        logger.info(msg)
 
-			# Return flag in metadata to signal that screenshot should be included
-			return ActionResult(
-				extracted_content=memory,
-				metadata={'include_screenshot': True},
-			)
+                        browser_session.request_next_screenshot()
 
-		# Dropdown Actions
+                        # Return flag in metadata to signal that screenshot should be included
+                        return ActionResult(
+                                extracted_content=memory,
+                                metadata={'include_screenshot': True},
+                        )
+
+                @self.registry.action(
+                        'Disable automatic screenshots (use before enabling the debugger to avoid CDP pauses).',
+                        param_model=NoParamsAction,
+                )
+                async def disable_screenshots(_: NoParamsAction, browser_session: BrowserSession):
+                        browser_session.screenshots_enabled = False
+                        browser_session.consume_forced_screenshot_request()
+
+                        memory = 'Automatic screenshots disabled for browser state captures'
+                        logger.info(f'🚫 {memory}')
+                        return ActionResult(
+                                extracted_content=memory,
+                                long_term_memory=memory,
+                                metadata={'screenshots_enabled': False},
+                        )
+
+                @self.registry.action(
+                        'Enable automatic screenshots after debugging is finished.',
+                        param_model=NoParamsAction,
+                )
+                async def enable_screenshots(_: NoParamsAction, browser_session: BrowserSession):
+                        browser_session.screenshots_enabled = True
+
+                        memory = 'Automatic screenshots enabled for browser state captures'
+                        logger.info(f'✅ {memory}')
+                        return ActionResult(
+                                extracted_content=memory,
+                                long_term_memory=memory,
+                                metadata={'screenshots_enabled': True},
+                        )
+
+                @self.registry.action(
+                        'Take an immediate manual screenshot of the current viewport and attach it to the conversation.',
+                        param_model=NoParamsAction,
+                )
+                async def manual_screenshot(_: NoParamsAction, browser_session: BrowserSession):
+                        try:
+                                screenshot_b64 = await browser_session.capture_viewport_screenshot()
+                                memory = 'Captured manual screenshot of the current viewport'
+                                logger.info(f'📥 {memory}')
+                                return ActionResult(
+                                        extracted_content=memory,
+                                        long_term_memory=memory,
+                                        images=[{'name': 'manual_screenshot.png', 'data': screenshot_b64}],
+                                )
+                        except Exception as e:
+                                logger.error(f'Failed to capture manual screenshot: {type(e).__name__}: {e}')
+                                return ActionResult(error='Failed to capture manual screenshot.')
+
+                # Dropdown Actions
 
 		@self.registry.action(
 			'',
