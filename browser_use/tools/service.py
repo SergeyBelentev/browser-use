@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 try:
 	from lmnr import Laminar  # type: ignore
@@ -35,18 +35,31 @@ from browser_use.observability import observe_debug
 from browser_use.tools.registry.service import Registry
 from browser_use.tools.utils import get_click_description
 from browser_use.tools.views import (
+	CheckNetworkTrafficAction,
 	ClickElementAction,
 	CloseTabAction,
+	DebuggerEnableAction,
+	DebuggerPauseAction,
+	DebuggerResumeAction,
+	DebuggerStepAction,
 	DoneAction,
+	EvaluatePausedFrameAction,
 	ExtractAction,
 	GetDropdownOptionsAction,
+	GetNetworkRequestDetailsAction,
+	GetNetworkRequestStackAction,
+	GetResponseBodyAction,
+	GetScriptSourceAction,
 	InputTextAction,
+	InspectDebuggerStateAction,
 	NavigateAction,
 	NoParamsAction,
+	RemoveBreakpointAction,
 	ScrollAction,
 	SearchAction,
 	SelectDropdownOptionAction,
 	SendKeysAction,
+	SetBreakpointAction,
 	StructuredOutputAction,
 	SwitchTabAction,
 	UploadFileAction,
@@ -111,6 +124,12 @@ class Tools(Generic[Context]):
 		self.registry = Registry[Context](exclude_actions if exclude_actions is not None else [])
 		self.display_files_in_done_text = display_files_in_done_text
 		self._output_model: type[BaseModel] | None = output_model
+		self._debugger_state: dict[str, Any] = {
+			'last_paused': {},
+			'paused_waiters': {},
+			'registered_client_id': None,
+			'scripts': {},
+		}
 
 		"""Register all default browser actions"""
 
@@ -601,6 +620,263 @@ class Tools(Generic[Context]):
 				logger.error(f'Failed to upload file: {e}')
 				raise BrowserError(f'Failed to upload file: {e}')
 
+		# CDP Debugger Actions
+
+		@self.registry.action(
+			'Enable the Chrome DevTools debugger and configure pause-on-exception behavior.',
+			param_model=DebuggerEnableAction,
+		)
+		async def enable_debugger(params: DebuggerEnableAction, browser_session: BrowserSession):
+			cdp_session = await self._ensure_debugger_ready(browser_session)
+			session_id = cdp_session.session_id
+
+			await cdp_session.cdp_client.send.Debugger.setPauseOnExceptions(
+				params={'state': params.pause_on_exceptions}, session_id=session_id
+			)
+
+			return ActionResult(
+				extracted_content=f'Debugger enabled (pause_on_exceptions={params.pause_on_exceptions}).',
+				long_term_memory='Debugger enabled for current target.',
+			)
+
+		@self.registry.action(
+			'Set a JavaScript breakpoint via CDP using scriptId or URL and line/column numbers.',
+			param_model=SetBreakpointAction,
+		)
+		async def set_breakpoint(params: SetBreakpointAction, browser_session: BrowserSession):
+			cdp_session = await self._ensure_debugger_ready(browser_session)
+			session_id = cdp_session.session_id
+
+			if params.url is None and params.script_id is None:
+				return ActionResult(error='Provide a script_id or url to place a breakpoint.')
+
+			try:
+				if params.url is not None:
+					breakpoint_params: dict[str, Any] = {
+						'url': params.url,
+						'lineNumber': params.line_number,
+						'columnNumber': params.column_number,
+					}
+					if params.condition is not None:
+						breakpoint_params['condition'] = params.condition
+
+					result = await cdp_session.cdp_client.send.Debugger.setBreakpointByUrl(
+						params=cast(Any, breakpoint_params),
+						session_id=session_id,
+					)
+				else:
+					assert params.script_id is not None
+					location: dict[str, Any] = {
+						'scriptId': params.script_id,
+						'lineNumber': params.line_number,
+						'columnNumber': params.column_number,
+					}
+					breakpoint_params = {'location': location}
+					if params.condition is not None:
+						breakpoint_params['condition'] = params.condition
+
+					result = await cdp_session.cdp_client.send.Debugger.setBreakpoint(
+						params=cast(Any, breakpoint_params),
+						session_id=session_id,
+					)
+			except Exception as e:
+				return ActionResult(error=f'Failed to set breakpoint: {e}')
+
+			breakpoint_id = result.get('breakpointId')
+			locations = result.get('locations', [])
+
+			location_strs = []
+			for loc in locations:
+				script_id = loc.get('scriptId') or 'unknown-script'
+				line = loc.get('lineNumber', 0) + 1
+				col = loc.get('columnNumber', 0) + 1
+				script_meta = self._debugger_state['scripts'].get(script_id, {})
+				url = script_meta.get('url') or params.url or '<unknown>'
+				location_strs.append(f'{url}:{line}:{col} (scriptId={script_id})')
+
+			summary = 'Breakpoint set'
+			if location_strs:
+				summary += f' at {"; ".join(location_strs)}'
+			if params.condition:
+				summary += f" with condition '{params.condition}'"
+
+			return ActionResult(
+				extracted_content=summary,
+				long_term_memory=summary,
+				success=bool(breakpoint_id),
+			)
+
+		@self.registry.action('Remove a JavaScript breakpoint using its breakpointId.', param_model=RemoveBreakpointAction)
+		async def remove_breakpoint(params: RemoveBreakpointAction, browser_session: BrowserSession):
+			cdp_session = await self._ensure_debugger_ready(browser_session)
+			try:
+				await cdp_session.cdp_client.send.Debugger.removeBreakpoint(
+					params={'breakpointId': params.breakpoint_id}, session_id=cdp_session.session_id
+				)
+			except Exception as e:
+				return ActionResult(error=f'Failed to remove breakpoint: {e}')
+
+			return ActionResult(
+				extracted_content=f'Removed breakpoint {params.breakpoint_id}.',
+				long_term_memory=f'Removed breakpoint {params.breakpoint_id}.',
+			)
+
+		@self.registry.action('Pause JavaScript execution using the CDP debugger.', param_model=DebuggerPauseAction)
+		async def pause_debugger(params: DebuggerPauseAction, browser_session: BrowserSession):
+			cdp_session = await self._ensure_debugger_ready(browser_session)
+			paused_event = await self._request_pause_and_wait(cdp_session)
+
+			if not paused_event:
+				return ActionResult(error='Pause command sent but no paused event was received.')
+
+			stack_description = self._format_call_stack(paused_event)
+			return ActionResult(
+				extracted_content=stack_description or 'Execution paused.',
+				long_term_memory='Execution paused via debugger.',
+			)
+
+		@self.registry.action('Resume JavaScript execution after a pause or breakpoint.', param_model=DebuggerResumeAction)
+		async def resume_debugger(params: DebuggerResumeAction, browser_session: BrowserSession):
+			cdp_session = await self._ensure_debugger_ready(browser_session)
+			try:
+				await cdp_session.cdp_client.send.Debugger.resume(session_id=cdp_session.session_id)
+				self._clear_paused_state(cdp_session.session_id)
+			except Exception as e:
+				return ActionResult(error=f'Failed to resume execution: {e}')
+
+			return ActionResult(extracted_content='Execution resumed.', long_term_memory='Execution resumed.')
+
+		@self.registry.action('Step over the next function call while paused in the debugger.', param_model=DebuggerStepAction)
+		async def step_over(params: DebuggerStepAction, browser_session: BrowserSession):
+			cdp_session = await self._ensure_debugger_ready(browser_session)
+			paused_event = await self._step_and_wait(cdp_session, 'stepOver')
+
+			if not paused_event:
+				return ActionResult(error='Step over issued but no paused event was received afterward.')
+
+			stack_description = self._format_call_stack(paused_event)
+			return ActionResult(extracted_content=stack_description or 'Stepped over to next pause.')
+
+		@self.registry.action('Step into the next function call while paused in the debugger.', param_model=DebuggerStepAction)
+		async def step_into(params: DebuggerStepAction, browser_session: BrowserSession):
+			cdp_session = await self._ensure_debugger_ready(browser_session)
+			paused_event = await self._step_and_wait(cdp_session, 'stepInto')
+
+			if not paused_event:
+				return ActionResult(error='Step into issued but no paused event was received afterward.')
+
+			stack_description = self._format_call_stack(paused_event)
+			return ActionResult(extracted_content=stack_description or 'Stepped into next call.')
+
+		@self.registry.action('Step out of the current frame while paused in the debugger.', param_model=DebuggerStepAction)
+		async def step_out(params: DebuggerStepAction, browser_session: BrowserSession):
+			cdp_session = await self._ensure_debugger_ready(browser_session)
+			paused_event = await self._step_and_wait(cdp_session, 'stepOut')
+
+			if not paused_event:
+				return ActionResult(error='Step out issued but no paused event was received afterward.')
+
+			stack_description = self._format_call_stack(paused_event)
+			return ActionResult(extracted_content=stack_description or 'Stepped out to caller.')
+
+		@self.registry.action(
+			'Inspect the current paused call stack and a snapshot of locals/closures.',
+			param_model=InspectDebuggerStateAction,
+		)
+		async def inspect_debugger_state(params: InspectDebuggerStateAction, browser_session: BrowserSession):
+			cdp_session = await self._ensure_debugger_ready(browser_session)
+			paused_event = self._get_paused_event(cdp_session.session_id)
+
+			if not paused_event:
+				return ActionResult(error='Debugger is not paused. Pause or hit a breakpoint before inspecting.')
+
+			stack_description = self._format_call_stack(paused_event, max_frames=params.max_frames)
+			locals_description = await self._collect_scope_summaries(
+				cdp_session, paused_event, max_frames=params.max_frames, max_properties=params.max_properties
+			)
+
+			combined = stack_description
+			if locals_description:
+				combined = f'{stack_description}\n\nLocals and closures:\n{locals_description}'
+
+			return ActionResult(extracted_content=combined or 'No stack frames available while paused.')
+
+		@self.registry.action(
+			'Evaluate a JavaScript expression in the context of a paused call frame.',
+			param_model=EvaluatePausedFrameAction,
+		)
+		async def evaluate_paused_frame(params: EvaluatePausedFrameAction, browser_session: BrowserSession):
+			cdp_session = await self._ensure_debugger_ready(browser_session)
+			paused_event = self._get_paused_event(cdp_session.session_id)
+
+			if not paused_event:
+				return ActionResult(error='Debugger is not paused. Pause or hit a breakpoint before evaluating.')
+
+			call_frames = paused_event.get('callFrames', []) if isinstance(paused_event, dict) else []
+			if not call_frames:
+				return ActionResult(error='No call frames available for evaluation.')
+
+			frame_index = min(params.call_frame_index, len(call_frames) - 1)
+			call_frame = call_frames[frame_index]
+			call_frame_id = call_frame.get('callFrameId')
+
+			try:
+				result = await cdp_session.cdp_client.send.Debugger.evaluateOnCallFrame(
+					params={'callFrameId': call_frame_id, 'expression': params.expression, 'returnByValue': True},
+					session_id=cdp_session.session_id,
+				)
+			except Exception as e:
+				return ActionResult(error=f'Failed to evaluate expression: {e}')
+
+			eval_result = result.get('result', {})
+			value_description = self._describe_remote_object(eval_result)
+
+			return ActionResult(
+				extracted_content=f'Evaluation result on frame {frame_index}: {value_description}',
+				long_term_memory=f"Evaluated expression '{params.expression}' on frame {frame_index}.",
+			)
+
+		@self.registry.action(
+			'Fetch script source near the paused location or a specified script id/url.',
+			param_model=GetScriptSourceAction,
+		)
+		async def get_script_source(params: GetScriptSourceAction, browser_session: BrowserSession):
+			cdp_session = await self._ensure_debugger_ready(browser_session)
+			paused_event = self._get_paused_event(cdp_session.session_id)
+
+			script_id = self._resolve_script_id(params.script_id, params.url, paused_event)
+			if not script_id:
+				return ActionResult(error='Could not resolve a scriptId from provided input or paused frame.')
+
+			focus_line = params.line_number
+			if focus_line is None and isinstance(paused_event, dict):
+				call_frames = paused_event.get('callFrames', [])
+				if call_frames:
+					focus_line = call_frames[0].get('location', {}).get('lineNumber', 0) + 1
+
+			try:
+				source_result = await cdp_session.cdp_client.send.Debugger.getScriptSource(
+					params={'scriptId': script_id}, session_id=cdp_session.session_id
+				)
+			except Exception as e:
+				return ActionResult(error=f'Failed to fetch script source: {e}')
+
+			source_text = source_result.get('scriptSource', '')
+			snippet = self._build_source_snippet(
+				source_text,
+				line_number=focus_line or 1,
+				context_lines=params.context_lines,
+			)
+
+			script_meta = self._debugger_state['scripts'].get(script_id, {})
+			script_url = script_meta.get('url') or params.url or '<unknown>'
+
+			header = f'Source for scriptId={script_id} ({script_url})'
+			if focus_line:
+				header += f' around line {focus_line}'
+
+			return ActionResult(extracted_content=f'{header}\n{snippet}')
+
 		# Tab Management Actions
 
 		@self.registry.action(
@@ -1023,6 +1299,137 @@ You will be given a query and the markdown of a webpage that has been filtered t
 					error_msg = selection_data.get('error', f'Failed to select option: {params.text}')
 					return ActionResult(error=error_msg)
 
+		# Network Inspection Actions
+
+		@self.registry.action(
+			'Check recent network traffic log. Use to verify if actions triggered API calls or to find failing XHR/Fetch requests.',
+			param_model=CheckNetworkTrafficAction,
+		)
+		async def check_network_traffic(params: CheckNetworkTrafficAction, browser_session: BrowserSession):
+			watchdog = getattr(browser_session, '_network_watchdog', None)
+			if watchdog is None:
+				return ActionResult(error='NetworkWatchdog is not active on this BrowserSession.')
+
+			target_id = browser_session.agent_focus_target_id
+			if not target_id:
+				return ActionResult(error='No active tab found.')
+
+			logs = watchdog.get_traffic_log(target_id)
+			if not logs:
+				return ActionResult(extracted_content='No network traffic recorded for this tab yet.')
+
+			filtered_lines = []
+			for entry in logs:
+				if params.only_errors:
+					if not entry.error_text and (entry.status is not None and entry.status < 400):
+						continue
+
+				if params.resource_type.lower() != 'all':
+					if (entry.resource_type or '').lower() != params.resource_type.lower():
+						continue
+
+				filtered_lines.append(entry.to_string())
+
+			if not filtered_lines:
+				return ActionResult(extracted_content='No requests matched the filters.')
+
+			output = '\n'.join(filtered_lines[-params.limit :])
+			return ActionResult(extracted_content=f'Recent Network Traffic:\n{output}')
+
+		@self.registry.action(
+			'Get detailed information for a specific network request including headers and optional body.',
+			param_model=GetNetworkRequestDetailsAction,
+		)
+		async def get_network_request_details(params: GetNetworkRequestDetailsAction, browser_session: BrowserSession):
+			watchdog = getattr(browser_session, '_network_watchdog', None)
+			if watchdog is None:
+				return ActionResult(error='NetworkWatchdog is not active on this BrowserSession.')
+
+			target_id = browser_session.agent_focus_target_id
+			if not target_id:
+				return ActionResult(error='No active tab found.')
+
+			entry = watchdog.find_entry(target_id, params.url_pattern)
+			if not entry:
+				return ActionResult(error=f"No recent request found matching URL pattern: '{params.url_pattern}'")
+
+			details = await watchdog.format_entry_details(
+				target_id,
+				entry,
+				include_headers=params.include_headers,
+				include_request_body=params.include_request_body,
+				include_response_body=params.include_response_body,
+				body_length=params.max_response_body_length,
+			)
+
+			if entry.has_stack():
+				details += (
+					f'\n\nStack trace captured ({len(entry.stack_trace)} frames). '
+					'Call get_network_request_stack to inspect initiator frames.'
+				)
+
+			return ActionResult(
+				extracted_content=details,
+				long_term_memory=f"Network request inspected for pattern '{params.url_pattern}'.",
+			)
+
+		@self.registry.action(
+			'Show the JavaScript stack trace that initiated a specific network request.',
+			param_model=GetNetworkRequestStackAction,
+		)
+		async def get_network_request_stack(params: GetNetworkRequestStackAction, browser_session: BrowserSession):
+			watchdog = getattr(browser_session, '_network_watchdog', None)
+			if watchdog is None:
+				return ActionResult(error='NetworkWatchdog is not active on this BrowserSession.')
+
+			target_id = browser_session.agent_focus_target_id
+			if not target_id:
+				return ActionResult(error='No active tab found.')
+
+			entry = watchdog.find_entry(target_id, params.url_pattern)
+			if not entry:
+				return ActionResult(error=f"No recent request found matching URL pattern: '{params.url_pattern}'")
+
+			stack_text = watchdog.format_stack_trace(entry, frame_limit=params.frame_limit)
+			if not stack_text:
+				return ActionResult(extracted_content='No stack trace captured for this request.')
+
+			header = f'Stack trace for {entry.url} ({entry.resource_type})'
+			if entry.initiator_type:
+				header += f' initiated by {entry.initiator_type}'
+
+			return ActionResult(extracted_content=f'{header}:\n{stack_text}')
+
+		@self.registry.action(
+			'Get the full response body (JSON/Text) of a specific network request. Use this to read API data directly.',
+			param_model=GetResponseBodyAction,
+		)
+		async def get_response_body(params: GetResponseBodyAction, browser_session: BrowserSession):
+			watchdog = getattr(browser_session, '_network_watchdog', None)
+			if watchdog is None:
+				return ActionResult(error='NetworkWatchdog is not active on this BrowserSession.')
+
+			target_id = browser_session.agent_focus_target_id
+			if not target_id:
+				return ActionResult(error='No active tab found.')
+
+			entry = watchdog.find_entry(target_id, params.url_pattern)
+			if not entry:
+				return ActionResult(error=f"No recent request found matching URL pattern: '{params.url_pattern}'")
+
+			body = await watchdog.get_response_body(target_id, entry.request_id)
+
+			if body is None:
+				return ActionResult(
+					error=f'Could not retrieve body for {entry.url}. The request may be too old or the body was discarded.'
+				)
+
+			MAX_BODY_LENGTH = 10000
+			if len(body) > MAX_BODY_LENGTH:
+				body = body[:MAX_BODY_LENGTH] + f'\n... (truncated {len(body) - MAX_BODY_LENGTH} chars)'
+
+			return ActionResult(extracted_content=body)
+
 		# File System Actions
 
 		@self.registry.action(
@@ -1360,7 +1767,7 @@ Validated Code (after quote fixing):
 		useful for enforcing constraints like disabling screenshot when use_vision != 'auto'.
 
 		Args:
-			action_name: Name of the action to exclude (e.g., 'screenshot')
+		        action_name: Name of the action to exclude (e.g., 'screenshot')
 		"""
 		self.registry.exclude_action(action_name)
 
@@ -1430,6 +1837,204 @@ Validated Code (after quote fixing):
 				else:
 					raise ValueError(f'Invalid action result type: {type(result)} of {result}')
 		return ActionResult()
+
+	def _register_debugger_handlers(self, cdp_client) -> None:
+		if self._debugger_state.get('registered_client_id') == id(cdp_client):
+			return
+
+		self._debugger_state['registered_client_id'] = id(cdp_client)
+		self._debugger_state['scripts'] = {}
+		self._debugger_state['last_paused'] = {}
+		self._debugger_state['paused_waiters'] = {}
+
+		def on_paused(event, session_id: str | None = None):
+			if session_id is None:
+				return
+
+			self._debugger_state['last_paused'][session_id] = event
+			waiter = self._debugger_state['paused_waiters'].get(session_id)
+			if waiter and not waiter.done():
+				waiter.set_result(event)
+
+		def on_resumed(event, session_id: str | None = None):
+			if session_id is None:
+				return
+			self._clear_paused_state(session_id)
+
+		def on_script_parsed(event, session_id: str | None = None):
+			if not isinstance(event, dict):
+				return
+
+			script_id = event.get('scriptId')
+			if not script_id:
+				return
+
+			self._debugger_state['scripts'][script_id] = {
+				'url': event.get('url'),
+				'startLine': event.get('startLine'),
+				'startColumn': event.get('startColumn'),
+				'endLine': event.get('endLine'),
+				'endColumn': event.get('endColumn'),
+				'sessionId': session_id,
+			}
+
+		cdp_client.register.Debugger.paused(on_paused)
+		cdp_client.register.Debugger.resumed(on_resumed)
+		cdp_client.register.Debugger.scriptParsed(on_script_parsed)
+
+	async def _ensure_debugger_ready(self, browser_session: BrowserSession):
+		cdp_session = await browser_session.get_or_create_cdp_session()
+		self._register_debugger_handlers(cdp_session.cdp_client)
+		await cdp_session.cdp_client.send.Debugger.enable(session_id=cdp_session.session_id)
+		return cdp_session
+
+	def _get_paused_event(self, session_id: str | None):
+		if session_id is None:
+			return None
+		return self._debugger_state['last_paused'].get(session_id)
+
+	async def _wait_for_pause(self, session_id: str, timeout: float = 3.0):
+		existing = self._debugger_state['last_paused'].get(session_id)
+		if existing:
+			return existing
+
+		loop = asyncio.get_running_loop()
+		future = loop.create_future()
+		self._debugger_state['paused_waiters'][session_id] = future
+
+		try:
+			return await asyncio.wait_for(future, timeout=timeout)
+		except TimeoutError:
+			return self._debugger_state['last_paused'].get(session_id)
+		finally:
+			self._debugger_state['paused_waiters'].pop(session_id, None)
+
+	async def _request_pause_and_wait(self, cdp_session):
+		await cdp_session.cdp_client.send.Debugger.pause(session_id=cdp_session.session_id)
+		return await self._wait_for_pause(cdp_session.session_id)
+
+	async def _step_and_wait(self, cdp_session, command_name: str):
+		command = getattr(cdp_session.cdp_client.send.Debugger, command_name, None)
+		if command is None:
+			return None
+
+		await command(session_id=cdp_session.session_id)
+		return await self._wait_for_pause(cdp_session.session_id)
+
+	def _format_call_stack(self, paused_event, max_frames: int = 5) -> str:
+		if not isinstance(paused_event, dict):
+			return ''
+
+		call_frames = paused_event.get('callFrames', [])[:max_frames]
+		stack_lines = []
+
+		for idx, frame in enumerate(call_frames):
+			location = frame.get('location', {}) if isinstance(frame, dict) else {}
+			script_id = location.get('scriptId') if isinstance(location, dict) else None
+			url = frame.get('url') if isinstance(frame, dict) else None
+			script_meta = self._debugger_state['scripts'].get(script_id or '', {})
+			resolved_url = url or script_meta.get('url') or '<unknown>'
+			line = (location.get('lineNumber', 0) if isinstance(location, dict) else 0) + 1
+			column = (location.get('columnNumber', 0) if isinstance(location, dict) else 0) + 1
+			function_name = frame.get('functionName') if isinstance(frame, dict) else None
+			function_label = function_name or '(anonymous)'
+			stack_lines.append(f'#{idx}: {function_label} @ {resolved_url}:{line}:{column} (scriptId={script_id})')
+
+		return '\n'.join(stack_lines)
+
+	async def _collect_scope_summaries(self, cdp_session, paused_event, max_frames: int = 5, max_properties: int = 5) -> str:
+		if not isinstance(paused_event, dict):
+			return ''
+
+		call_frames = paused_event.get('callFrames', [])[:max_frames]
+		scope_lines = []
+
+		for idx, frame in enumerate(call_frames):
+			frame_scopes = []
+			for scope in frame.get('scopeChain', []) if isinstance(frame, dict) else []:
+				if scope.get('type') not in {'local', 'closure', 'block', 'catch'}:
+					continue
+
+				scope_object = scope.get('object', {}) if isinstance(scope, dict) else {}
+				object_id = scope_object.get('objectId')
+				if not object_id:
+					continue
+
+				try:
+					properties_result = await cdp_session.cdp_client.send.Runtime.getProperties(
+						params={'objectId': object_id, 'ownProperties': True},
+						session_id=cdp_session.session_id,
+					)
+				except Exception:
+					continue
+
+				properties = properties_result.get('result', []) if isinstance(properties_result, dict) else []
+				entries = []
+				for prop in properties[:max_properties]:
+					name = prop.get('name')
+					value = self._describe_remote_object(prop.get('value'))
+					entries.append(f'{name}={value}')
+
+				if entries:
+					frame_scopes.append(f'{scope.get("type", "local")}: {", ".join(entries)}')
+
+			if frame_scopes:
+				scope_lines.append(f'Frame {idx}: {"; ".join(frame_scopes)}')
+
+		return '\n'.join(scope_lines)
+
+	def _describe_remote_object(self, remote_obj: Any) -> str:
+		if not remote_obj:
+			return 'undefined'
+
+		obj_type = remote_obj.get('type')
+		value = remote_obj.get('value')
+
+		if value is None and obj_type == 'object':
+			return remote_obj.get('description') or 'object'
+
+		if isinstance(value, str):
+			if len(value) > 120:
+				return repr(value[:117] + '...')
+			return repr(value)
+
+		return str(value)
+
+	def _resolve_script_id(self, provided_id: str | None, url: str | None, paused_event) -> str | None:
+		if provided_id:
+			return provided_id
+
+		if url:
+			for script_id, meta in self._debugger_state['scripts'].items():
+				if meta.get('url') == url:
+					return script_id
+
+		if isinstance(paused_event, dict):
+			call_frames = paused_event.get('callFrames', [])
+			if call_frames:
+				location = call_frames[0].get('location', {})
+				return location.get('scriptId')
+
+		return None
+
+	def _build_source_snippet(self, source: str, line_number: int, context_lines: int) -> str:
+		lines = source.split('\n')
+		target_index = max(0, line_number - 1)
+		start = max(0, target_index - context_lines)
+		end = min(len(lines), target_index + context_lines + 1)
+
+		snippet_lines = []
+		for idx in range(start, end):
+			marker = '>' if idx == target_index else ' '
+			snippet_lines.append(f'{marker} {idx + 1}: {lines[idx]}')
+
+		return '\n'.join(snippet_lines)
+
+	def _clear_paused_state(self, session_id: str) -> None:
+		self._debugger_state['last_paused'].pop(session_id, None)
+		waiter = self._debugger_state['paused_waiters'].pop(session_id, None)
+		if waiter and not waiter.done():
+			waiter.cancel()
 
 	def __getattr__(self, name: str):
 		"""

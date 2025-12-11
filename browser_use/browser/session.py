@@ -444,7 +444,7 @@ class BrowserSession(BaseModel):
 		"""Get instance-specific logger with session ID in the name"""
 		# **regenerate it every time** because our id and str(self) can change as browser connection state changes
 		# if self._logger is None or not self._cdp_client_root:
-		# 	self._logger = logging.getLogger(f'browser_use.{self}')
+		#       self._logger = logging.getLogger(f'browser_use.{self}')
 		return logging.getLogger(f'browser_use.{self}')
 
 	@cached_property
@@ -602,7 +602,7 @@ class BrowserSession(BaseModel):
 		"""Handle browser start request.
 
 		Returns:
-			Dict with 'cdp_url' key containing the CDP URL
+		        Dict with 'cdp_url' key containing the CDP URL
 
 		Note: This method is idempotent - calling start() multiple times is safe.
 		- If already connected, it skips reconnection
@@ -1123,7 +1123,7 @@ class BrowserSession(BaseModel):
 		"""Get the target that currently has agent focus.
 
 		Returns:
-			Target object if agent has focus, None otherwise.
+		        Target object if agent has focus, None otherwise.
 		"""
 		if not self.session_manager:
 			return None
@@ -1133,7 +1133,7 @@ class BrowserSession(BaseModel):
 		"""Get all page/tab targets (excludes iframes, workers, etc.).
 
 		Returns:
-			List of Target objects for all page/tab targets.
+		        List of Target objects for all page/tab targets.
 		"""
 		if not self.session_manager:
 			return []
@@ -1170,10 +1170,10 @@ class BrowserSession(BaseModel):
 		Extracts decrypted cookies via CDP, bypassing keychain encryption.
 
 		Args:
-			output_path: Optional path to save storage_state.json. If None, returns dict only.
+		        output_path: Optional path to save storage_state.json. If None, returns dict only.
 
 		Returns:
-			Storage state dict with cookies in Playwright format.
+		        Storage state dict with cookies in Playwright format.
 
 		"""
 		from pathlib import Path
@@ -1216,14 +1216,14 @@ class BrowserSession(BaseModel):
 		to the pool via Target.attachedToTarget events. This method retrieves them.
 
 		Args:
-			target_id: Target ID to get session for. If None, uses current agent focus.
-			focus: If True, switches agent focus to this target (page targets only).
+		        target_id: Target ID to get session for. If None, uses current agent focus.
+		        focus: If True, switches agent focus to this target (page targets only).
 
 		Returns:
-			CDPSession for the specified target.
+		        CDPSession for the specified target.
 
 		Raises:
-			ValueError: If target doesn't exist or session is not available.
+		        ValueError: If target doesn't exist or session is not available.
 		"""
 		assert self._cdp_client_root is not None, 'Root CDP client not initialized'
 		assert self.session_manager is not None, 'SessionManager not initialized'
@@ -1357,6 +1357,7 @@ class BrowserSession(BaseModel):
 		from browser_use.browser.watchdogs.dom_watchdog import DOMWatchdog
 		from browser_use.browser.watchdogs.downloads_watchdog import DownloadsWatchdog
 		from browser_use.browser.watchdogs.local_browser_watchdog import LocalBrowserWatchdog
+		from browser_use.browser.watchdogs.network_watchdog import NetworkWatchdog
 		from browser_use.browser.watchdogs.permissions_watchdog import PermissionsWatchdog
 		from browser_use.browser.watchdogs.popups_watchdog import PopupsWatchdog
 		from browser_use.browser.watchdogs.recording_watchdog import RecordingWatchdog
@@ -1476,6 +1477,11 @@ class BrowserSession(BaseModel):
 		RecordingWatchdog.model_rebuild()
 		self._recording_watchdog = RecordingWatchdog(event_bus=self.event_bus, browser_session=self)
 		self._recording_watchdog.attach_to_session()
+
+		# Initialize NetworkWatchdog (handles network traffic logging and extraction)
+		NetworkWatchdog.model_rebuild()
+		self._network_watchdog = NetworkWatchdog(event_bus=self.event_bus, browser_session=self)
+		self._network_watchdog.attach_to_session()
 
 		# Mark watchdogs as attached to prevent duplicate attachment
 		self._watchdogs_attached = True
@@ -1901,8 +1907,8 @@ class BrowserSession(BaseModel):
 		"""Navigate to a URL using the standard event system.
 
 		Args:
-			url: URL to navigate to
-			new_tab: Whether to open in a new tab
+		        url: URL to navigate to
+		        new_tab: Whether to open in a new tab
 		"""
 		from browser_use.browser.events import NavigateToUrlEvent
 
@@ -1920,10 +1926,10 @@ class BrowserSession(BaseModel):
 		Get element from cached selector map.
 
 		Args:
-			index: The element index from the serialized DOM
+		        index: The element index from the serialized DOM
 
 		Returns:
-			EnhancedDOMTreeNode or None if index not found
+		        EnhancedDOMTreeNode or None if index not found
 		"""
 		#  Check cached selector map
 		if self._cached_selector_map and index in self._cached_selector_map:
@@ -1937,7 +1943,7 @@ class BrowserSession(BaseModel):
 		This should be called by the DOM watchdog after rebuilding the DOM.
 
 		Args:
-			selector_map: The new selector map from DOM serialization
+		        selector_map: The new selector map from DOM serialization
 		"""
 		self._cached_selector_map = selector_map
 
@@ -1954,11 +1960,11 @@ class BrowserSession(BaseModel):
 		<select> elements and file inputs) work correctly.
 
 		Args:
-			x: X coordinate relative to viewport
-			y: Y coordinate relative to viewport
+		        x: X coordinate relative to viewport
+		        y: Y coordinate relative to viewport
 
 		Returns:
-			EnhancedDOMTreeNode at the coordinates, or None if no element found
+		        EnhancedDOMTreeNode at the coordinates, or None if no element found
 		"""
 		from browser_use.dom.views import NodeType
 
@@ -2101,10 +2107,10 @@ class BrowserSession(BaseModel):
 		"""Check if element is a file input.
 
 		Args:
-			element: The DOM element to check
+		        element: The DOM element to check
 
 		Returns:
-			True if element is a file input, False otherwise
+		        True if element is a file input, False otherwise
 		"""
 		if self._dom_watchdog:
 			return self._dom_watchdog.is_file_input(element)
@@ -2120,7 +2126,7 @@ class BrowserSession(BaseModel):
 		"""Get the current selector map from cached state or DOM watchdog.
 
 		Returns:
-			Dictionary mapping element indices to EnhancedDOMTreeNode objects
+		        Dictionary mapping element indices to EnhancedDOMTreeNode objects
 		"""
 		# First try cached selector map
 		if self._cached_selector_map:
@@ -2137,10 +2143,10 @@ class BrowserSession(BaseModel):
 		"""Find element index by its id attribute.
 
 		Args:
-			element_id: The id attribute value to search for
+		        element_id: The id attribute value to search for
 
 		Returns:
-			Index of the element, or None if not found
+		        Index of the element, or None if not found
 		"""
 		selector_map = await self.get_selector_map()
 		for idx, element in selector_map.items():
@@ -2152,10 +2158,10 @@ class BrowserSession(BaseModel):
 		"""Find element index by its class attribute (matches if class contains the given name).
 
 		Args:
-			class_name: The class name to search for
+		        class_name: The class name to search for
 
 		Returns:
-			Index of the first matching element, or None if not found
+		        Index of the first matching element, or None if not found
 		"""
 		selector_map = await self.get_selector_map()
 		for idx, element in selector_map.items():
@@ -2176,26 +2182,26 @@ class BrowserSession(BaseModel):
 
 			# Remove highlights via JavaScript - be thorough
 			script = """
-			(function() {
-				// Remove all browser-use highlight elements
-				const highlights = document.querySelectorAll('[data-browser-use-highlight]');
-				console.log('Removing', highlights.length, 'browser-use highlight elements');
-				highlights.forEach(el => el.remove());
+                        (function() {
+                                // Remove all browser-use highlight elements
+                                const highlights = document.querySelectorAll('[data-browser-use-highlight]');
+                                console.log('Removing', highlights.length, 'browser-use highlight elements');
+                                highlights.forEach(el => el.remove());
 
-				// Also remove by ID in case selector missed anything
-				const highlightContainer = document.getElementById('browser-use-debug-highlights');
-				if (highlightContainer) {
-					console.log('Removing highlight container by ID');
-					highlightContainer.remove();
-				}
+                                // Also remove by ID in case selector missed anything
+                                const highlightContainer = document.getElementById('browser-use-debug-highlights');
+                                if (highlightContainer) {
+                                        console.log('Removing highlight container by ID');
+                                        highlightContainer.remove();
+                                }
 
-				// Final cleanup - remove any orphaned tooltips
-				const orphanedTooltips = document.querySelectorAll('[data-browser-use-highlight="tooltip"]');
-				orphanedTooltips.forEach(el => el.remove());
+                                // Final cleanup - remove any orphaned tooltips
+                                const orphanedTooltips = document.querySelectorAll('[data-browser-use-highlight="tooltip"]');
+                                orphanedTooltips.forEach(el => el.remove());
 
-				return { removed: highlights.length };
-			})();
-			"""
+                                return { removed: highlights.length };
+                        })();
+                        """
 			result = await cdp_session.cdp_client.send.Runtime.evaluate(
 				params={'expression': script, 'returnByValue': True}, session_id=cdp_session.session_id
 			)
@@ -2218,11 +2224,11 @@ class BrowserSession(BaseModel):
 		and finally uses JavaScript getBoundingClientRect as a last resort.
 
 		Args:
-			backend_node_id: The backend node ID to get coordinates for
-			cdp_session: The CDP session to use
+		        backend_node_id: The backend node ID to get coordinates for
+		        cdp_session: The CDP session to use
 
 		Returns:
-			DOMRect with coordinates or None if element not found/no bounds
+		        DOMRect with coordinates or None if element not found/no bounds
 		"""
 		session_id = cdp_session.session_id
 		quads = []
@@ -2279,16 +2285,16 @@ class BrowserSession(BaseModel):
 						params={
 							'objectId': object_id,
 							'functionDeclaration': """
-							function() {
-								const rect = this.getBoundingClientRect();
-								return {
-									x: rect.x,
-									y: rect.y,
-									width: rect.width,
-									height: rect.height
-								};
-							}
-							""",
+                                                        function() {
+                                                                const rect = this.getBoundingClientRect();
+                                                                return {
+                                                                        x: rect.x,
+                                                                        y: rect.y,
+                                                                        width: rect.width,
+                                                                        height: rect.height
+                                                                };
+                                                        }
+                                                        """,
 							'returnByValue': True,
 						},
 						session_id=session_id,
@@ -2331,7 +2337,7 @@ class BrowserSession(BaseModel):
 		is being interacted with. The highlight automatically fades after the configured duration.
 
 		Args:
-			node: The DOM node to highlight with backend_node_id for coordinate lookup
+		        node: The DOM node to highlight with backend_node_id for coordinate lookup
 		"""
 		if not self.browser_profile.highlight_elements:
 			return
@@ -2353,104 +2359,104 @@ class BrowserSession(BaseModel):
 
 			# Create animated corner brackets that start offset and animate inward
 			script = f"""
-			(function() {{
-				const rect = {json.dumps({'x': rect.x, 'y': rect.y, 'width': rect.width, 'height': rect.height})};
-				const color = {json.dumps(color)};
-				const duration = {duration_ms};
+                        (function() {{
+                                const rect = {json.dumps({'x': rect.x, 'y': rect.y, 'width': rect.width, 'height': rect.height})};
+                                const color = {json.dumps(color)};
+                                const duration = {duration_ms};
 
-				// Scale corner size based on element dimensions to ensure gaps between corners
-				const maxCornerSize = 20;
-				const minCornerSize = 8;
-				const cornerSize = Math.max(
-					minCornerSize,
-					Math.min(maxCornerSize, Math.min(rect.width, rect.height) * 0.35)
-				);
-				const borderWidth = 3;
-				const startOffset = 10; // Starting offset in pixels
-				const finalOffset = -3; // Final position slightly outside the element
+                                // Scale corner size based on element dimensions to ensure gaps between corners
+                                const maxCornerSize = 20;
+                                const minCornerSize = 8;
+                                const cornerSize = Math.max(
+                                        minCornerSize,
+                                        Math.min(maxCornerSize, Math.min(rect.width, rect.height) * 0.35)
+                                );
+                                const borderWidth = 3;
+                                const startOffset = 10; // Starting offset in pixels
+                                const finalOffset = -3; // Final position slightly outside the element
 
-				// Get current scroll position
-				const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
-				const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+                                // Get current scroll position
+                                const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+                                const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
 
-				// Create container for all corners
-				const container = document.createElement('div');
-				container.setAttribute('data-browser-use-interaction-highlight', 'true');
-				container.style.cssText = `
-					position: absolute;
-					left: ${{rect.x + scrollX}}px;
-					top: ${{rect.y + scrollY}}px;
-					width: ${{rect.width}}px;
-					height: ${{rect.height}}px;
-					pointer-events: none;
-					z-index: 2147483647;
-				`;
+                                // Create container for all corners
+                                const container = document.createElement('div');
+                                container.setAttribute('data-browser-use-interaction-highlight', 'true');
+                                container.style.cssText = `
+                                        position: absolute;
+                                        left: ${{rect.x + scrollX}}px;
+                                        top: ${{rect.y + scrollY}}px;
+                                        width: ${{rect.width}}px;
+                                        height: ${{rect.height}}px;
+                                        pointer-events: none;
+                                        z-index: 2147483647;
+                                `;
 
-				// Create 4 corner brackets
-				const corners = [
-					{{ pos: 'top-left', startX: -startOffset, startY: -startOffset, finalX: finalOffset, finalY: finalOffset }},
-					{{ pos: 'top-right', startX: startOffset, startY: -startOffset, finalX: -finalOffset, finalY: finalOffset }},
-					{{ pos: 'bottom-left', startX: -startOffset, startY: startOffset, finalX: finalOffset, finalY: -finalOffset }},
-					{{ pos: 'bottom-right', startX: startOffset, startY: startOffset, finalX: -finalOffset, finalY: -finalOffset }}
-				];
+                                // Create 4 corner brackets
+                                const corners = [
+                                        {{ pos: 'top-left', startX: -startOffset, startY: -startOffset, finalX: finalOffset, finalY: finalOffset }},
+                                        {{ pos: 'top-right', startX: startOffset, startY: -startOffset, finalX: -finalOffset, finalY: finalOffset }},
+                                        {{ pos: 'bottom-left', startX: -startOffset, startY: startOffset, finalX: finalOffset, finalY: -finalOffset }},
+                                        {{ pos: 'bottom-right', startX: startOffset, startY: startOffset, finalX: -finalOffset, finalY: -finalOffset }}
+                                ];
 
-				corners.forEach(corner => {{
-					const bracket = document.createElement('div');
-					bracket.style.cssText = `
-						position: absolute;
-						width: ${{cornerSize}}px;
-						height: ${{cornerSize}}px;
-						pointer-events: none;
-						transition: all 0.15s ease-out;
-					`;
+                                corners.forEach(corner => {{
+                                        const bracket = document.createElement('div');
+                                        bracket.style.cssText = `
+                                                position: absolute;
+                                                width: ${{cornerSize}}px;
+                                                height: ${{cornerSize}}px;
+                                                pointer-events: none;
+                                                transition: all 0.15s ease-out;
+                                        `;
 
-					// Position corners
-					if (corner.pos === 'top-left') {{
-						bracket.style.top = '0';
-						bracket.style.left = '0';
-						bracket.style.borderTop = `${{borderWidth}}px solid ${{color}}`;
-						bracket.style.borderLeft = `${{borderWidth}}px solid ${{color}}`;
-						bracket.style.transform = `translate(${{corner.startX}}px, ${{corner.startY}}px)`;
-					}} else if (corner.pos === 'top-right') {{
-						bracket.style.top = '0';
-						bracket.style.right = '0';
-						bracket.style.borderTop = `${{borderWidth}}px solid ${{color}}`;
-						bracket.style.borderRight = `${{borderWidth}}px solid ${{color}}`;
-						bracket.style.transform = `translate(${{corner.startX}}px, ${{corner.startY}}px)`;
-					}} else if (corner.pos === 'bottom-left') {{
-						bracket.style.bottom = '0';
-						bracket.style.left = '0';
-						bracket.style.borderBottom = `${{borderWidth}}px solid ${{color}}`;
-						bracket.style.borderLeft = `${{borderWidth}}px solid ${{color}}`;
-						bracket.style.transform = `translate(${{corner.startX}}px, ${{corner.startY}}px)`;
-					}} else if (corner.pos === 'bottom-right') {{
-						bracket.style.bottom = '0';
-						bracket.style.right = '0';
-						bracket.style.borderBottom = `${{borderWidth}}px solid ${{color}}`;
-						bracket.style.borderRight = `${{borderWidth}}px solid ${{color}}`;
-						bracket.style.transform = `translate(${{corner.startX}}px, ${{corner.startY}}px)`;
-					}}
+                                        // Position corners
+                                        if (corner.pos === 'top-left') {{
+                                                bracket.style.top = '0';
+                                                bracket.style.left = '0';
+                                                bracket.style.borderTop = `${{borderWidth}}px solid ${{color}}`;
+                                                bracket.style.borderLeft = `${{borderWidth}}px solid ${{color}}`;
+                                                bracket.style.transform = `translate(${{corner.startX}}px, ${{corner.startY}}px)`;
+                                        }} else if (corner.pos === 'top-right') {{
+                                                bracket.style.top = '0';
+                                                bracket.style.right = '0';
+                                                bracket.style.borderTop = `${{borderWidth}}px solid ${{color}}`;
+                                                bracket.style.borderRight = `${{borderWidth}}px solid ${{color}}`;
+                                                bracket.style.transform = `translate(${{corner.startX}}px, ${{corner.startY}}px)`;
+                                        }} else if (corner.pos === 'bottom-left') {{
+                                                bracket.style.bottom = '0';
+                                                bracket.style.left = '0';
+                                                bracket.style.borderBottom = `${{borderWidth}}px solid ${{color}}`;
+                                                bracket.style.borderLeft = `${{borderWidth}}px solid ${{color}}`;
+                                                bracket.style.transform = `translate(${{corner.startX}}px, ${{corner.startY}}px)`;
+                                        }} else if (corner.pos === 'bottom-right') {{
+                                                bracket.style.bottom = '0';
+                                                bracket.style.right = '0';
+                                                bracket.style.borderBottom = `${{borderWidth}}px solid ${{color}}`;
+                                                bracket.style.borderRight = `${{borderWidth}}px solid ${{color}}`;
+                                                bracket.style.transform = `translate(${{corner.startX}}px, ${{corner.startY}}px)`;
+                                        }}
 
-					container.appendChild(bracket);
+                                        container.appendChild(bracket);
 
-					// Animate to final position slightly outside the element
-					setTimeout(() => {{
-						bracket.style.transform = `translate(${{corner.finalX}}px, ${{corner.finalY}}px)`;
-					}}, 10);
-				}});
+                                        // Animate to final position slightly outside the element
+                                        setTimeout(() => {{
+                                                bracket.style.transform = `translate(${{corner.finalX}}px, ${{corner.finalY}}px)`;
+                                        }}, 10);
+                                }});
 
-				document.body.appendChild(container);
+                                document.body.appendChild(container);
 
-				// Auto-remove after duration
-				setTimeout(() => {{
-					container.style.opacity = '0';
-					container.style.transition = 'opacity 0.3s ease-out';
-					setTimeout(() => container.remove(), 300);
-				}}, duration);
+                                // Auto-remove after duration
+                                setTimeout(() => {{
+                                        container.style.opacity = '0';
+                                        container.style.transition = 'opacity 0.3s ease-out';
+                                        setTimeout(() => container.remove(), 300);
+                                }}, duration);
 
-				return {{ created: true }};
-			}})();
-			"""
+                                return {{ created: true }};
+                        }})();
+                        """
 
 			# Fire and forget - don't wait for completion
 
@@ -2469,8 +2475,8 @@ class BrowserSession(BaseModel):
 		the click action occurred. The highlight automatically fades after the configured duration.
 
 		Args:
-			x: Horizontal coordinate relative to viewport left edge
-			y: Vertical coordinate relative to viewport top edge
+		        x: Horizontal coordinate relative to viewport left edge
+		        y: Vertical coordinate relative to viewport top edge
 		"""
 		if not self.browser_profile.highlight_elements:
 			return
@@ -2485,82 +2491,82 @@ class BrowserSession(BaseModel):
 
 			# Create animated crosshair and circle at the click coordinates
 			script = f"""
-			(function() {{
-				const x = {x};
-				const y = {y};
-				const color = {json.dumps(color)};
-				const duration = {duration_ms};
+                        (function() {{
+                                const x = {x};
+                                const y = {y};
+                                const color = {json.dumps(color)};
+                                const duration = {duration_ms};
 
-				// Get current scroll position
-				const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
-				const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+                                // Get current scroll position
+                                const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+                                const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
 
-				// Create container
-				const container = document.createElement('div');
-				container.setAttribute('data-browser-use-coordinate-highlight', 'true');
-				container.style.cssText = `
-					position: absolute;
-					left: ${{x + scrollX}}px;
-					top: ${{y + scrollY}}px;
-					width: 0;
-					height: 0;
-					pointer-events: none;
-					z-index: 2147483647;
-				`;
+                                // Create container
+                                const container = document.createElement('div');
+                                container.setAttribute('data-browser-use-coordinate-highlight', 'true');
+                                container.style.cssText = `
+                                        position: absolute;
+                                        left: ${{x + scrollX}}px;
+                                        top: ${{y + scrollY}}px;
+                                        width: 0;
+                                        height: 0;
+                                        pointer-events: none;
+                                        z-index: 2147483647;
+                                `;
 
-				// Create outer circle
-				const outerCircle = document.createElement('div');
-				outerCircle.style.cssText = `
-					position: absolute;
-					left: -15px;
-					top: -15px;
-					width: 30px;
-					height: 30px;
-					border: 3px solid ${{color}};
-					border-radius: 50%;
-					opacity: 0;
-					transform: scale(0.3);
-					transition: all 0.2s ease-out;
-				`;
-				container.appendChild(outerCircle);
+                                // Create outer circle
+                                const outerCircle = document.createElement('div');
+                                outerCircle.style.cssText = `
+                                        position: absolute;
+                                        left: -15px;
+                                        top: -15px;
+                                        width: 30px;
+                                        height: 30px;
+                                        border: 3px solid ${{color}};
+                                        border-radius: 50%;
+                                        opacity: 0;
+                                        transform: scale(0.3);
+                                        transition: all 0.2s ease-out;
+                                `;
+                                container.appendChild(outerCircle);
 
-				// Create center dot
-				const centerDot = document.createElement('div');
-				centerDot.style.cssText = `
-					position: absolute;
-					left: -4px;
-					top: -4px;
-					width: 8px;
-					height: 8px;
-					background: ${{color}};
-					border-radius: 50%;
-					opacity: 0;
-					transform: scale(0);
-					transition: all 0.15s ease-out;
-				`;
-				container.appendChild(centerDot);
+                                // Create center dot
+                                const centerDot = document.createElement('div');
+                                centerDot.style.cssText = `
+                                        position: absolute;
+                                        left: -4px;
+                                        top: -4px;
+                                        width: 8px;
+                                        height: 8px;
+                                        background: ${{color}};
+                                        border-radius: 50%;
+                                        opacity: 0;
+                                        transform: scale(0);
+                                        transition: all 0.15s ease-out;
+                                `;
+                                container.appendChild(centerDot);
 
-				document.body.appendChild(container);
+                                document.body.appendChild(container);
 
-				// Animate in
-				setTimeout(() => {{
-					outerCircle.style.opacity = '0.8';
-					outerCircle.style.transform = 'scale(1)';
-					centerDot.style.opacity = '1';
-					centerDot.style.transform = 'scale(1)';
-				}}, 10);
+                                // Animate in
+                                setTimeout(() => {{
+                                        outerCircle.style.opacity = '0.8';
+                                        outerCircle.style.transform = 'scale(1)';
+                                        centerDot.style.opacity = '1';
+                                        centerDot.style.transform = 'scale(1)';
+                                }}, 10);
 
-				// Animate out and remove
-				setTimeout(() => {{
-					outerCircle.style.opacity = '0';
-					outerCircle.style.transform = 'scale(1.5)';
-					centerDot.style.opacity = '0';
-					setTimeout(() => container.remove(), 300);
-				}}, duration);
+                                // Animate out and remove
+                                setTimeout(() => {{
+                                        outerCircle.style.opacity = '0';
+                                        outerCircle.style.transform = 'scale(1.5)';
+                                        centerDot.style.opacity = '0';
+                                        setTimeout(() => container.remove(), 300);
+                                }}, duration);
 
-				return {{ created: true }};
-			}})();
-			"""
+                                return {{ created: true }};
+                        }})();
+                        """
 
 			# Fire and forget - don't wait for completion
 			await cdp_session.cdp_client.send.Runtime.evaluate(
@@ -2628,115 +2634,115 @@ class BrowserSession(BaseModel):
 
 			# Create the proven highlighting script from v0.6.0 with fixed positioning
 			script = f"""
-			(function() {{
-				// Interactive elements data
-				const interactiveElements = {json.dumps(elements_data)};
+                        (function() {{
+                                // Interactive elements data
+                                const interactiveElements = {json.dumps(elements_data)};
 
-				console.log('=== BROWSER-USE HIGHLIGHTING ===');
-				console.log('Highlighting', interactiveElements.length, 'interactive elements');
+                                console.log('=== BROWSER-USE HIGHLIGHTING ===');
+                                console.log('Highlighting', interactiveElements.length, 'interactive elements');
 
-				// Double-check: Remove any existing highlight container first
-				const existingContainer = document.getElementById('browser-use-debug-highlights');
-				if (existingContainer) {{
-					console.log('⚠️ Found existing highlight container, removing it first');
-					existingContainer.remove();
-				}}
+                                // Double-check: Remove any existing highlight container first
+                                const existingContainer = document.getElementById('browser-use-debug-highlights');
+                                if (existingContainer) {{
+                                        console.log('⚠️ Found existing highlight container, removing it first');
+                                        existingContainer.remove();
+                                }}
 
-				// Also remove any stray highlight elements
-				const strayHighlights = document.querySelectorAll('[data-browser-use-highlight]');
-				if (strayHighlights.length > 0) {{
-					console.log('⚠️ Found', strayHighlights.length, 'stray highlight elements, removing them');
-					strayHighlights.forEach(el => el.remove());
-				}}
+                                // Also remove any stray highlight elements
+                                const strayHighlights = document.querySelectorAll('[data-browser-use-highlight]');
+                                if (strayHighlights.length > 0) {{
+                                        console.log('⚠️ Found', strayHighlights.length, 'stray highlight elements, removing them');
+                                        strayHighlights.forEach(el => el.remove());
+                                }}
 
-				// Use maximum z-index for visibility
-				const HIGHLIGHT_Z_INDEX = 2147483647;
+                                // Use maximum z-index for visibility
+                                const HIGHLIGHT_Z_INDEX = 2147483647;
 
-				// Create container for all highlights - use FIXED positioning (key insight from v0.6.0)
-				const container = document.createElement('div');
-				container.id = 'browser-use-debug-highlights';
-				container.setAttribute('data-browser-use-highlight', 'container');
+                                // Create container for all highlights - use FIXED positioning (key insight from v0.6.0)
+                                const container = document.createElement('div');
+                                container.id = 'browser-use-debug-highlights';
+                                container.setAttribute('data-browser-use-highlight', 'container');
 
-				container.style.cssText = `
-					position: absolute;
-					top: 0;
-					left: 0;
-					width: 100vw;
-					height: 100vh;
-					pointer-events: none;
-					z-index: ${{HIGHLIGHT_Z_INDEX}};
-					overflow: visible;
-					margin: 0;
-					padding: 0;
-					border: none;
-					outline: none;
-					box-shadow: none;
-					background: none;
-					font-family: inherit;
-				`;
+                                container.style.cssText = `
+                                        position: absolute;
+                                        top: 0;
+                                        left: 0;
+                                        width: 100vw;
+                                        height: 100vh;
+                                        pointer-events: none;
+                                        z-index: ${{HIGHLIGHT_Z_INDEX}};
+                                        overflow: visible;
+                                        margin: 0;
+                                        padding: 0;
+                                        border: none;
+                                        outline: none;
+                                        box-shadow: none;
+                                        background: none;
+                                        font-family: inherit;
+                                `;
 
-				// Helper function to create text elements safely
-				function createTextElement(tag, text, styles) {{
-					const element = document.createElement(tag);
-					element.textContent = text;
-					if (styles) element.style.cssText = styles;
-					return element;
-				}}
+                                // Helper function to create text elements safely
+                                function createTextElement(tag, text, styles) {{
+                                        const element = document.createElement(tag);
+                                        element.textContent = text;
+                                        if (styles) element.style.cssText = styles;
+                                        return element;
+                                }}
 
-				// Add highlights for each element
-				interactiveElements.forEach((element, index) => {{
-					const highlight = document.createElement('div');
-					highlight.setAttribute('data-browser-use-highlight', 'element');
-					highlight.setAttribute('data-element-id', element.backend_node_id);
-					highlight.style.cssText = `
-						position: absolute;
-						left: ${{element.x}}px;
-						top: ${{element.y}}px;
-						width: ${{element.width}}px;
-						height: ${{element.height}}px;
-						outline: 2px dashed #4a90e2;
-						outline-offset: -2px;
-						background: transparent;
-						pointer-events: none;
-						box-sizing: content-box;
-						transition: outline 0.2s ease;
-						margin: 0;
-						padding: 0;
-						border: none;
-					`;
+                                // Add highlights for each element
+                                interactiveElements.forEach((element, index) => {{
+                                        const highlight = document.createElement('div');
+                                        highlight.setAttribute('data-browser-use-highlight', 'element');
+                                        highlight.setAttribute('data-element-id', element.backend_node_id);
+                                        highlight.style.cssText = `
+                                                position: absolute;
+                                                left: ${{element.x}}px;
+                                                top: ${{element.y}}px;
+                                                width: ${{element.width}}px;
+                                                height: ${{element.height}}px;
+                                                outline: 2px dashed #4a90e2;
+                                                outline-offset: -2px;
+                                                background: transparent;
+                                                pointer-events: none;
+                                                box-sizing: content-box;
+                                                transition: outline 0.2s ease;
+                                                margin: 0;
+                                                padding: 0;
+                                                border: none;
+                                        `;
 
-					// Enhanced label with backend node ID
-					const label = createTextElement('div', element.backend_node_id, `
-						position: absolute;
-						top: -20px;
-						left: 0;
-						background-color: #4a90e2;
-						color: white;
-						padding: 2px 6px;
-						font-size: 11px;
-						font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-						font-weight: bold;
-						border-radius: 3px;
-						white-space: nowrap;
-						z-index: ${{HIGHLIGHT_Z_INDEX + 1}};
-						box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-						border: none;
-						outline: none;
-						margin: 0;
-						line-height: 1.2;
-					`);
+                                        // Enhanced label with backend node ID
+                                        const label = createTextElement('div', element.backend_node_id, `
+                                                position: absolute;
+                                                top: -20px;
+                                                left: 0;
+                                                background-color: #4a90e2;
+                                                color: white;
+                                                padding: 2px 6px;
+                                                font-size: 11px;
+                                                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+                                                font-weight: bold;
+                                                border-radius: 3px;
+                                                white-space: nowrap;
+                                                z-index: ${{HIGHLIGHT_Z_INDEX + 1}};
+                                                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                                                border: none;
+                                                outline: none;
+                                                margin: 0;
+                                                line-height: 1.2;
+                                        `);
 
-					highlight.appendChild(label);
-					container.appendChild(highlight);
-				}});
+                                        highlight.appendChild(label);
+                                        container.appendChild(highlight);
+                                }});
 
-				// Add container to document
-				document.body.appendChild(container);
+                                // Add container to document
+                                document.body.appendChild(container);
 
-				console.log('Highlighting complete - added', interactiveElements.length, 'highlights');
-				return {{ added: interactiveElements.length }};
-			}})();
-			"""
+                                console.log('Highlighting complete - added', interactiveElements.length, 'highlights');
+                                return {{ added: interactiveElements.length }};
+                        }})();
+                        """
 
 			# Execute the script
 			result = await cdp_session.cdp_client.send.Runtime.evaluate(
@@ -2796,7 +2802,7 @@ class BrowserSession(BaseModel):
 		"""Get list of files downloaded during this browser session.
 
 		Returns:
-			list[str]: List of absolute file paths to downloaded files in this session
+		        list[str]: List of absolute file paths to downloaded files in this session
 		"""
 		return self._downloaded_files.copy()
 
@@ -2905,7 +2911,7 @@ class BrowserSession(BaseModel):
 		"""Grant permissions using CDP Browser.grantPermissions."""
 		params = {'permissions': permissions}
 		# if origin:
-		# 	params['origin'] = origin
+		#       params['origin'] = origin
 		cdp_session = await self.get_or_create_cdp_session()
 		# await cdp_session.cdp_client.send.Browser.grantPermissions(params=params, session_id=cdp_session.session_id)
 		raise NotImplementedError('Not implemented yet')
@@ -2943,11 +2949,11 @@ class BrowserSession(BaseModel):
 		"""Set viewport using CDP Emulation.setDeviceMetricsOverride.
 
 		Args:
-			width: Viewport width
-			height: Viewport height
-			device_scale_factor: Device scale factor (default 1.0)
-			mobile: Whether to emulate mobile device (default False)
-			target_id: Optional target ID to set viewport for. If not provided, uses agent_focus.
+		        width: Viewport width
+		        height: Viewport height
+		        device_scale_factor: Device scale factor (default 1.0)
+		        mobile: Whether to emulate mobile device (default False)
+		        target_id: Optional target ID to set viewport for. If not provided, uses agent_focus.
 		"""
 		if target_id:
 			# Set viewport for specific target
@@ -3084,10 +3090,10 @@ class BrowserSession(BaseModel):
 		"""Check if a target should be processed.
 
 		Args:
-			target_info: Target info dict from CDP
+		        target_info: Target info dict from CDP
 
 		Returns:
-			True if target should be processed, False if it should be skipped
+		        True if target should be processed, False if it should be skipped
 		"""
 		target_type = target_info.get('type', '')
 		url = target_info.get('url', '')
@@ -3132,9 +3138,9 @@ class BrowserSession(BaseModel):
 		"""Get a complete frame hierarchy from all browser targets.
 
 		Returns:
-			Tuple of (all_frames, target_sessions) where:
-			- all_frames: dict mapping frame_id -> frame info dict with all metadata
-			- target_sessions: dict mapping target_id -> session_id for active sessions
+		        Tuple of (all_frames, target_sessions) where:
+		        - all_frames: dict mapping frame_id -> frame info dict with all metadata
+		        - target_sessions: dict mapping target_id -> session_id for active sessions
 		"""
 		all_frames = {}  # frame_id -> FrameInfo dict
 		target_sessions = {}  # target_id -> session_id (keep sessions alive during collection)
@@ -3270,8 +3276,8 @@ class BrowserSession(BaseModel):
 		"""Populate additional frame metadata like backend node IDs and parent target IDs.
 
 		Args:
-			all_frames: Frame hierarchy dict to populate
-			target_sessions: Active target sessions
+		        all_frames: Frame hierarchy dict to populate
+		        target_sessions: Active target sessions
 		"""
 		for frame_id_iter, frame_info in all_frames.items():
 			parent_frame_id = frame_info.get('parentFrameId')
@@ -3308,11 +3314,11 @@ class BrowserSession(BaseModel):
 		"""Find the frame info for a specific frame ID.
 
 		Args:
-			frame_id: The frame ID to search for
-			all_frames: Optional pre-built frame hierarchy. If None, will call get_all_frames()
+		        frame_id: The frame ID to search for
+		        all_frames: Optional pre-built frame hierarchy. If None, will call get_all_frames()
 
 		Returns:
-			Frame info dict if found, None otherwise
+		        Frame info dict if found, None otherwise
 		"""
 		if all_frames is None:
 			all_frames, _ = await self.get_all_frames()
@@ -3329,13 +3335,13 @@ class BrowserSession(BaseModel):
 		for any frame, including OOPIFs (Out-of-Process iframes).
 
 		Args:
-			frame_id: The frame ID to search for
+		        frame_id: The frame ID to search for
 
 		Returns:
-			Tuple of (cdp_cdp_session, target_id) for the target containing the frame
+		        Tuple of (cdp_cdp_session, target_id) for the target containing the frame
 
 		Raises:
-			ValueError: If the frame is not found in any target
+		        ValueError: If the frame is not found in any target
 		"""
 		# If cross-origin iframes are disabled, just use the main session
 		if not self.browser_profile.cross_origin_iframes:
@@ -3430,14 +3436,14 @@ class BrowserSession(BaseModel):
 		"""Take a screenshot using CDP.
 
 		Args:
-			path: Optional file path to save screenshot
-			full_page: Capture entire scrollable page beyond viewport
-			format: Image format ('png', 'jpeg', 'webp')
-			quality: Quality 0-100 for JPEG format
-			clip: Region to capture {'x': int, 'y': int, 'width': int, 'height': int}
+		        path: Optional file path to save screenshot
+		        full_page: Capture entire scrollable page beyond viewport
+		        format: Image format ('png', 'jpeg', 'webp')
+		        quality: Quality 0-100 for JPEG format
+		        clip: Region to capture {'x': int, 'y': int, 'width': int, 'height': int}
 
 		Returns:
-			Screenshot data as bytes
+		        Screenshot data as bytes
 		"""
 		import base64
 
@@ -3487,13 +3493,13 @@ class BrowserSession(BaseModel):
 		"""Take a screenshot of a specific element.
 
 		Args:
-			selector: CSS selector for the element
-			path: Optional file path to save screenshot
-			format: Image format ('png', 'jpeg', 'webp')
-			quality: Quality 0-100 for JPEG format
+		        selector: CSS selector for the element
+		        path: Optional file path to save screenshot
+		        format: Image format ('png', 'jpeg', 'webp')
+		        quality: Quality 0-100 for JPEG format
 
 		Returns:
-			Screenshot data as bytes
+		        Screenshot data as bytes
 		"""
 
 		bounds = await self._get_element_bounds(selector)
